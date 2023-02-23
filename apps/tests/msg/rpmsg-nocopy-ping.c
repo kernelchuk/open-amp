@@ -1,8 +1,11 @@
 /*
  * SPDX-License-Identifier: BSD-3-Clause
- *
- * Copyright (c) 2020, Xiaomi Inc. All rights reserved.
- * Copyright (c) 2020, STMicroelectronics
+ */
+
+/*
+ * This is a test application to send rpmsgs in "zero copy" mode.
+ * It also tests the host part of the buffer recycler mechanism implemented
+ * in the rpmsg virtio layer.
  */
 
 #include <stdio.h>
@@ -12,9 +15,11 @@
 #include <openamp/open_amp.h>
 #include <metal/alloc.h>
 #include "platform_info.h"
-#include "rpmsg-echo.h"
+#include "rpmsg-ping.h"
 
-#define LPRINTF(format, ...) printf(format, ##__VA_ARGS__)
+#define MAX_NB_TX_BUFF  10
+
+#define LPRINTF(format, ...) printf("Ping thread: " format, ##__VA_ARGS__)
 #define LPERROR(format, ...) LPRINTF("ERROR: " format, ##__VA_ARGS__)
 
 struct _payload {
@@ -29,16 +34,19 @@ struct rpmsg_rcv_msg {
 	struct rpmsg_endpoint *ept;
 };
 
-static int err_cnt;
-static struct rpmsg_rcv_msg rcv_msg;
-
 #define PAYLOAD_MIN_SIZE	1
 
 /* Globals */
 static struct rpmsg_endpoint lept;
+static struct _payload *i_payload;
+static struct rpmsg_rcv_msg rcv_msg;
 static int rnum;
 static int err_cnt;
 static int ept_deleted;
+
+/* External functions */
+extern int init_system(void);
+extern void cleanup_system(void);
 
 static int rpmsg_check_rcv_msg(struct rpmsg_rcv_msg *msg, uint32_t exp_num)
 {
@@ -94,7 +102,7 @@ static void rpmsg_service_unbind(struct rpmsg_endpoint *ept)
 {
 	(void)ept;
 	rpmsg_destroy_ept(&lept);
-	LPRINTF("echo test: service is destroyed\r\n");
+	LPRINTF("service is destroyed\r\n");
 	ept_deleted = 1;
 }
 
@@ -112,18 +120,20 @@ static void rpmsg_name_service_bind_cb(struct rpmsg_device *rdev,
 
 }
 
-static int app(struct rpmsg_device *rdev, void *priv)
+/*-----------------------------------------------------------------------------*
+ *  Application
+ *-----------------------------------------------------------------------------*
+ */
+int app(struct rpmsg_device *rdev, void *priv)
 {
 	int ret;
 	int i, num_payloads;
 	uint32_t size, max_size;
 	int expect_rnum = 0;
-
-	LPRINTF(" 1 - Send data to remote core, retrieve the echo");
-	LPRINTF(" and validate its integrity ..\r\n");
+	void *buff_list[MAX_NB_TX_BUFF];
 
 	max_size = rpmsg_virtio_get_buffer_size(rdev);
-	if ((int32_t)max_size < 0) {
+	if (((int)max_size) < 0) {
 		LPERROR("No available buffer size.\r\n");
 		return -1;
 	}
@@ -144,12 +154,42 @@ static int app(struct rpmsg_device *rdev, void *priv)
 		platform_poll(priv);
 
 	LPRINTF("RPMSG endpoint is binded with remote.\r\n");
+
+	LPRINTF(" 1 - Get some TX buffers\r\n");
+	for (i = 0; i < MAX_NB_TX_BUFF; i++)
+		buff_list[i] = rpmsg_get_tx_payload_buffer(&lept, &max_size, 1);
+
+	LPRINTF(" 2 - Release the unused Tx buffer\r\n");
+
+	/*
+	 * Test the reclaimer:
+	 * Notice that, for test, the buff_list[0] is not released.
+	 * Keeping a lost buffer allows to test the correct behavior of the library.
+	 */
+	for (i = MAX_NB_TX_BUFF - 1; i > 0 ; i--) {
+		ret = rpmsg_release_tx_buffer(&lept, buff_list[i]);
+		if (ret != RPMSG_SUCCESS) {
+			if (ret) {
+				LPERROR("Failed to release TX buffer.\r\n");
+				return -1;
+			}
+		}
+	}
+
+	LPRINTF(" 3 - Send data to remote core, retrieve the echo");
+	LPRINTF(" and validate its integrity ..\r\n");
+
 	for (i = 0, size = PAYLOAD_MIN_SIZE; i < num_payloads; i++, size++) {
-		struct _payload *i_payload;
 
 		i_payload = rpmsg_get_tx_payload_buffer(&lept, &max_size, 1);
 		if (!i_payload) {
 			LPERROR("Failed to get payload...\r\n");
+			err_cnt++;
+			break;
+		}
+		if (i_payload == buff_list[0]) {
+			LPERROR("error: got the lost buffer\r\n");
+			err_cnt++;
 			break;
 		}
 
@@ -160,23 +200,42 @@ static int app(struct rpmsg_device *rdev, void *priv)
 		memset(&i_payload->data[0], 0xA5, size);
 
 		LPRINTF("sending payload number %lu of size %lu\r\n",
-			i_payload->num,
-			(unsigned long)(2 * sizeof(unsigned long)) + size);
+			i_payload->num, sizeof(*i_payload) + size);
 
 		ret = rpmsg_send_nocopy(&lept, i_payload,
-					(2 * sizeof(unsigned long)) + size);
-
+					sizeof(*i_payload) + size);
 		if (ret < 0) {
 			LPERROR("Failed to send data...\r\n");
+			err_cnt++;
 			break;
 		}
-		LPRINTF("echo test: sent : %lu\r\n",
-			(unsigned long)(2 * sizeof(unsigned long)) + size);
+		LPRINTF("sent : %lu\r\n", sizeof(*i_payload) + size);
+
+		/* Get and discard an unused TX buffer every 13 sent */
+		if (!(i % 13)) {
+			i_payload = rpmsg_get_tx_payload_buffer(&lept, &max_size, 1);
+			if (!i_payload) {
+				LPERROR("Failed to get payload...\r\n");
+				err_cnt++;
+				break;
+			}
+			if (i_payload == buff_list[0]) {
+				LPERROR("error: got the lost buffer\r\n");
+				err_cnt++;
+				break;
+			}
+			ret = rpmsg_release_tx_buffer(&lept, i_payload);
+			if (ret < 0) {
+				LPRINTF("Failed to release TX buffer...\r\n");
+				err_cnt++;
+				break;
+			}
+		}
 
 		expect_rnum++;
 		do {
 			platform_poll(priv);
-		} while ((rnum < expect_rnum) && !ept_deleted);
+		} while ((rnum < expect_rnum) && !err_cnt && !ept_deleted);
 
 		if (ept_deleted)
 			break;
@@ -189,9 +248,9 @@ static int app(struct rpmsg_device *rdev, void *priv)
 	LPRINTF("**********************************\r\n");
 	/* Destroy the RPMsg endpoint */
 	rpmsg_destroy_ept(&lept);
-	LPRINTF("Quitting application .. Echo test end\r\n");
+	LPRINTF("Quitting application...\r\n");
 
-	return 0;
+	return err_cnt ? -1 : 0;
 }
 
 int main(int argc, char *argv[])

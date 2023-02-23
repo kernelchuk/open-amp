@@ -104,24 +104,10 @@ The [Zephyr open-amp repo](https://github.com/zephyrproject-rtos/open-amp)
 implements the open-amp library for the Zephyr project. It is mainly a fork of
 this repository, with some add-ons for integration in the Zephyr project.
 The standard way to compile OpenAMP for a Zephyr project is to use Zephyr build
-environment. Please refer to [Zephyr OpenAMP samples](https://github.com/zephyrproject-rtos/zephyr/tree/main/samples/subsys/ipc) for examples.
-
-Nevertheless you can compile the OpenAMP project for Zephyr.
-As OpenAMP uses libmetal, please refer to libmetal README to build libmetal
-for Zephyr before building OpenAMP library for Zephyr.
-As Zephyr uses CMake, we build OpenAMP library as a target of Zephyr CMake
-project. Here is how to build libmetal for Zephyr:
-```
-    $ export ZEPHRY_GCC_VARIANT=zephyr
-    $ export ZEPHRY_SDK_INSTALL_DIR=<where Zephyr SDK is installed>
-    $ source <git_clone_zephyr_project_source_root>/zephyr-env.sh
-
-    $ cmake <OpenAMP_source_root> \
-      -DWITH_ZEPHYR=on -DBOARD=qemu_cortex_m3 \
-      -DCMAKE_INCLUDE_PATH="<libmetal_zephyr_build_dir>/lib/include" \
-      -DCMAKE_LIBRARY_PATH="<libmetal_zephyr_build_dir>/lib" \
-    $ make VERBOSE=1 all
-```
+environment. Please refer to
+[Zephyr OpenAMP samples](https://github.com/zephyrproject-rtos/zephyr/tree/main/samples/subsys/ipc)
+for examples and [Zephyr documentation](https://docs.zephyrproject.org/latest/) for the build
+process.
 
 ### Example to compile OpenAMP for communication between Linux processes:
 * Install libsysfs devel and libhugetlbfs devel packages on your Linux host.
@@ -319,6 +305,6 @@ To check your \<n\> commits in your git branch:
 We use standard github mechanism for pull request. Please refer to github documentation for help.
 
 ## Communication and Collaboration
-[Subscribe](https://lists.openampproject.org/mailman/listinfo/openamp-rp) to the OpenAMP mailing list(openamp-rp@lists.openampproject.org).
+[Subscribe](https://lists.openampproject.org/mailman3/lists/openamp-rp.lists.openampproject.org/) to the OpenAMP mailing list(openamp-rp@lists.openampproject.org).
 
 For more details on the framework please refer to the the [OpenAMP wiki](https://github.com/OpenAMP/open-amp/wiki).

@@ -219,11 +219,13 @@ rproc_virtio_create_vdev(unsigned int role, unsigned int notifyid,
 
 	for (i = 0; i < num_vrings; i++) {
 		struct virtqueue *vq;
+#ifndef VIRTIO_DEVICE_ONLY
 		struct fw_rsc_vdev_vring *vring_rsc;
+#endif
 		unsigned int num_extra_desc = 0;
 
-		vring_rsc = &vdev_rsc->vring[i];
 #ifndef VIRTIO_DEVICE_ONLY
+		vring_rsc = &vdev_rsc->vring[i];
 		if (role == VIRTIO_DEV_DRIVER) {
 			num_extra_desc = vring_rsc->num;
 		}
@@ -285,7 +287,8 @@ void rproc_virtio_remove_vdev(struct virtio_device *vdev)
 		if (vq)
 			metal_free_memory(vq);
 	}
-	metal_free_memory(vdev->vrings_info);
+	if (vdev->vrings_info)
+		metal_free_memory(vdev->vrings_info);
 	metal_free_memory(rpvdev);
 }
 
@@ -298,7 +301,7 @@ int rproc_virtio_init_vring(struct virtio_device *vdev, unsigned int index,
 	unsigned int num_vrings;
 
 	num_vrings = vdev->vrings_num;
-	if (index >= num_vrings)
+	if ((index >= num_vrings) || (num_descs > RPROC_MAX_VRING_DESC))
 		return -RPROC_EINVAL;
 	vring_info = &vdev->vrings_info[index];
 	vring_info->io = io;

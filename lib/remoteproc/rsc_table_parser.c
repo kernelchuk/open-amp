@@ -7,6 +7,7 @@
  */
 
 #include <metal/io.h>
+#include <metal/utilities.h>
 #include <openamp/rsc_table_parser.h>
 
 static int handle_dummy_rsc(struct remoteproc *rproc, void *rsc);
@@ -126,29 +127,45 @@ int handle_vendor_rsc(struct remoteproc *rproc, void *rsc)
 int handle_vdev_rsc(struct remoteproc *rproc, void *rsc)
 {
 	struct fw_rsc_vdev *vdev_rsc = rsc;
-	unsigned int notifyid, i, num_vrings;
+	int i, num_vrings;
+	unsigned int notifyid;
+	struct fw_rsc_vdev_vring *vring_rsc;
 
 	/* only assign notification IDs but do not initialize vdev */
 	notifyid = vdev_rsc->notifyid;
 	notifyid = remoteproc_allocate_id(rproc,
-					  notifyid, notifyid + 1);
+					  notifyid,
+					  notifyid == RSC_NOTIFY_ID_ANY ?
+					  RSC_NOTIFY_ID_ANY : notifyid + 1);
 	if (notifyid != RSC_NOTIFY_ID_ANY)
 		vdev_rsc->notifyid = notifyid;
+	else
+		return -RPROC_ERR_RSC_TAB_NP;
 
 	num_vrings = vdev_rsc->num_of_vrings;
 	for (i = 0; i < num_vrings; i++) {
-		struct fw_rsc_vdev_vring *vring_rsc;
-
 		vring_rsc = &vdev_rsc->vring[i];
 		notifyid = vring_rsc->notifyid;
 		notifyid = remoteproc_allocate_id(rproc,
 						  notifyid,
-						  notifyid + 1);
+						  notifyid == RSC_NOTIFY_ID_ANY ?
+						  RSC_NOTIFY_ID_ANY : notifyid + 1);
 		if (notifyid != RSC_NOTIFY_ID_ANY)
 			vring_rsc->notifyid = notifyid;
+		else
+			goto err;
 	}
 
 	return 0;
+
+err:
+	for (i--; i >= 0; i--) {
+		vring_rsc = &vdev_rsc->vring[i];
+		metal_bitmap_clear_bit(&rproc->bitmap, vring_rsc->notifyid);
+	}
+	metal_bitmap_clear_bit(&rproc->bitmap, vdev_rsc->notifyid);
+
+	return -RPROC_ERR_RSC_TAB_NP;
 }
 
 /**
@@ -201,6 +218,9 @@ size_t find_rsc(void *rsc_table, unsigned int rsc_type, unsigned int index)
 	unsigned int lrsc_type;
 
 	metal_assert(r_table);
+	if (!r_table)
+		return 0;
+
 	/* Loop through the offset array and parse each resource entry */
 	rsc_index = 0;
 	for (i = 0; i < r_table->num; i++) {
